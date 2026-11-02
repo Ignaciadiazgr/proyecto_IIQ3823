@@ -5,13 +5,13 @@ basada en la versión de SteadyCom de reframed (https://github.com/cdanielmachad
 Se han realizado modificaciones para mejorar la compatibilidad con el proyecto y
 para facilitar la integración con otras funciones y módulos del proyecto.
 Se han modificado las funciones auxiliares para la construcción del problema de optimización,
-la búsqueda binaria de la tasa de crecimiento y la verificación de la factibilidad de las soluciones.
-Se han agregado comentarios y documentación para mejorar la comprensión del código.
+la búsqueda de la tasa de crecimiento y la verificación de la factibilidad de las soluciones.
+Se han agregado comentarios para mejorar la comprensión del código.
 
 Referencia:
-Chan, L. J., Simons, M., & Maranas, C. D. (2017). SteadyCom: Predicting microbial abundances while 
-ensuring community stability. PLo S Computational Biology, 13(5), e1005539. 
-https://doi.org/10.1371/journal.pcbi.1005539 
+Chan, S. H. J., Simons, M. N., & Maranas, C. D. (2017). SteadyCom: Predicting microbial
+abundances while ensuring community stability. PLOS Computational Biology, 13 (5),
+1-25. https://doi.org/10.1371/journal.pcbi.1005539
 """
 
 from reframed.community.solution import CommunitySolution
@@ -51,11 +51,6 @@ def SteadyCom(community, constraints=None, solver=None, *, abs_tol=1e-3, max_ite
     growth_id = community.merged_model.biomass_reaction
     mu = sol.values.get(growth_id, None)
 
-    print("\n--- DEBUG STEADYCOM ---")
-    print("Estado:", sol.status)
-    print("Reacción objetivo:", growth_id)
-    print("Crecimiento obtenido:", mu)
-
     if mu is None or mu <= 1e-10:
         raise RuntimeError(
             "SteadyCom no encontró crecimiento positivo. "
@@ -64,9 +59,6 @@ def SteadyCom(community, constraints=None, solver=None, *, abs_tol=1e-3, max_ite
 
     solution = CommunitySolution(community, sol.values)
     solution.solver = solver
-
-    if verbose:
-        print("Estado:", sol.status, "| crecimiento:", mu)
 
     return solution
 
@@ -197,8 +189,5 @@ def binary_search(solver, objective, obj_frac=1, minimize=False, max_iters=20, a
 
     if i == max_iters - 1:
         warn("Max iterations exceeded.")
-
-    if verbose:
-        print(f"mu probado = {value}, status = {sol.status}, last_feasible = {last_feasible}")
 
     return sol

@@ -1,3 +1,8 @@
+"""
+Este código se hizo con ayuda de Claude AI, pero con revisión completa y modificaciones significativas por 
+parte del grupo, con tal de que se cumpla el objetivo planteado en el informe.
+"""
+
 import matplotlib.pyplot as plt
 
 COLORES = {"B1": "#3BA3DF", "B2": "#DB33A6", "B3": "#009E73"}
