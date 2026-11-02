@@ -2,7 +2,7 @@ import community_moma as cm
 import cobra
 from reframed import from_cobrapy, FBA
 import matplotlib.pyplot as plt
-from utils import tabla, silencio
+from utils import tabla, silencio, tabla_delta
 import figuras
 
 # FBA de cobrapy para verificar resultados obtenidos con reframed
@@ -120,6 +120,12 @@ if __name__ == "__main__":
         if r["estado"] == "ok":
             print(f"\nCosto ponderado por especie, alpha=0.9, {orden}:",
                   {o: f"{c:.3e}" for o, c in r["costo_esp"].items()})
+
+    # Tabla Delta y costo metabólico (ec. 11 y 15)
+    print("\n=== Δ y costo metabólico (pesos normalizados) ===")
+    tabla_delta(res_n)
+    print("\n=== Δ y costo metabólico (pesos unitarios) ===")
+    tabla_delta(res_u)
 
     # Figuras
     figuras.figura_resultados(res_n, res_u, "fig_resultados", escala="log")

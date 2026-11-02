@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-COLORES = {"B1": "#0072B2", "B2": "#D55E00", "B3": "#009E73"}
+COLORES = {"B1": "#3BA3DF", "B2": "#DB33A6", "B3": "#009E73"}
 ETIQ_N = r"$w_i=1/\|v_i^*\|^2$ (ec. 14)"
 ETIQ_U = r"$w_i=1$ (sensibilidad)"
 
