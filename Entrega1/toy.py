@@ -3,7 +3,7 @@ import cobra
 from reframed import from_cobrapy, FBA
 import matplotlib.pyplot as plt
 from utils import tabla, silencio, tabla_delta
-import figuras
+import figuras as figuras
 
 # FBA de cobrapy para verificar resultados obtenidos con reframed
 def fba_cobra(modelo, medio):

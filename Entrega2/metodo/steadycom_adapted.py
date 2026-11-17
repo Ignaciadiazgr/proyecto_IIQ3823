@@ -25,7 +25,7 @@ def es_intercambio(rid, reaction):
     return (reaction.reaction_type == ReactionType.EXCHANGE or (rid.startswith("EX_") and len(reaction.stoichiometry) == 1))
     
 
-def SteadyCom(community, constraints=None, solver=None, *, abs_tol=1e-3, max_iters=20, verbose=False):
+def SteadyCom(community, constraints=None, solver=None, *, abs_tol=1e-3, max_iters=100, verbose=False):
     """ Implementación de SteadyCom (Chan et al 2017).
 
     Entradas:
@@ -141,7 +141,7 @@ def build_problem(community, growth=1, bigM=1000):
     return solver
 
 
-def binary_search(solver, objective, obj_frac=1, minimize=False, max_iters=20, abs_tol=1e-3, constraints=None, verbose=False):
+def binary_search(solver, objective, obj_frac=1, minimize=False, max_iters=100, abs_tol=1e-3, constraints=None, verbose=False):
     previous_value = 0
     value = 1
     fold = 2
