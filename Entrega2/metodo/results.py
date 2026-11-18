@@ -373,7 +373,7 @@ def graficar_abundancias(resultados, medio=None, ax=None):
             )
 
         ax.set_title(
-            "Abundancias: MOMA vs SteadyCom residentes"
+            "Abundancias: MOMA vs SteadyCom residentes (B1+B2)"
         )
 
     else:
@@ -440,7 +440,7 @@ def graficar_abundancias(resultados, medio=None, ax=None):
             )
 
         ax.set_title(
-            "Abundancias: MOMA vs SteadyCom completo"
+            "Abundancias: MOMA vs SteadyCom B1+B2+B3"
         )
 
     # ========================================================
