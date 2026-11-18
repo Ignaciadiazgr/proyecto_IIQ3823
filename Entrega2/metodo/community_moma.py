@@ -379,7 +379,6 @@ class ProblemaInercia:
         residentes,
         invasores,
         X_ref=None,
-        eps=1e-4,
         pesos="norma",
         todos_presentes=True
     ):
@@ -388,7 +387,6 @@ class ProblemaInercia:
         self.refs = refs
         self.residentes = list(residentes)
         self.invasores = list(invasores)
-        self.eps = eps
         self.pesos_tipo = pesos
 
         # Validar partición de organismos
@@ -456,13 +454,6 @@ class ProblemaInercia:
                     == self.X[org] * self.v[(org, rxn_com)],
                     name=f"acoplamiento_{org}_{rxn_com}"
                 )
-
-        # Restricciones de presencia
-        for org in self.presentes:
-            self.gm.addConstr(
-                self.X[org] >= self.eps,
-                name=f"presencia_{org}"
-            )
 
         # Pesos de cada organismo
         self.w = {}
@@ -639,7 +630,6 @@ def barrido_moma(
     residentes,
     invasores,
     X_ref=None,
-    eps=1e-4,
     pesos="norma",
     coexistencia=True,
     abs_tol=1e-5,
@@ -664,8 +654,6 @@ def barrido_moma(
         Organismos invasores. Debe contener al menos uno.
     X_ref : dict, optional
         Abundancias relativas de referencia de los residentes.
-    eps : float
-        Abundancia mínima para organismos presentes.
     pesos : str
         "norma" o "uno".
     coexistencia : bool
@@ -795,7 +783,6 @@ def barrido_moma(
         residentes=residentes,
         invasores=invasores,
         pesos=pesos,
-        eps=eps,
         todos_presentes=coexistencia
     )
 
