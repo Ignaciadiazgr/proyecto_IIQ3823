@@ -263,11 +263,13 @@ def calcular_referencias(modelos, medio_comunidad, medios_individuales, abs_tol=
     """
     referencias_pfba = calcular_referencias_individuales(modelos, medios_individuales)
     referencia_community = calcular_referencia_comunitaria(modelos, medio_comunidad, abs_tol=abs_tol, max_iters=max_iters)
-
+    
     return {
         "pfba": referencias_pfba,
-        "steadycom": referencia_community
+        "steadycom": referencia_community,
+        "modelos": modelos
     }
+
 
 
 def imprimir_referencias(referencias):

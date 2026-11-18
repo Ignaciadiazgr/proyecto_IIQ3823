@@ -6,7 +6,7 @@ import io
 import time
 import gurobipy as gp
 from gurobipy import GRB
-
+from metodo.referencias import calcular_referencia_comunitaria
 from metodo.steadycom_adapted import SteadyCom
 
 
@@ -714,6 +714,61 @@ def barrido_moma(
         com
     )
 
+    
+    # --------------------------------------------------------
+    # Referencia de abundancias previa a la invasión
+    # --------------------------------------------------------
+
+    referencia_residentes = None
+
+    if not residentes:
+        X_ref = {}
+
+    elif X_ref is None:
+
+        # Seleccionar exclusivamente los modelos residentes.
+        modelos_residentes = {
+            org: referencias["modelos"][org]
+            for org in residentes
+        }
+
+        # Ejecutar SteadyCom sin incluir a los invasores.
+        referencia_residentes = calcular_referencia_comunitaria(
+            modelos=modelos_residentes,
+            medio=medio,
+            abs_tol=abs_tol,
+            max_iters=max_iters
+        )
+
+        # Estas son las abundancias previas a la invasión.
+        X_ref = referencia_residentes["abundancias"].copy()
+
+    else:
+        # Permitir referencias manuales.
+        if set(X_ref) != set(residentes):
+            raise ValueError(
+                "X_ref debe contener exactamente los residentes."
+            )
+
+        X_ref = {
+            org: float(X_ref[org])
+            for org in residentes
+        }
+
+    # Verificación y normalización por posibles errores numéricos.
+    if residentes:
+        suma = sum(X_ref.values())
+
+        if suma <= 0:
+            raise ValueError(
+                "La suma de abundancias residentes debe ser positiva."
+            )
+
+        X_ref = {
+            org: valor / suma
+            for org, valor in X_ref.items()
+        }
+
     # --------------------------------------------------------
     # Preparar abundancias de referencia
     # --------------------------------------------------------
@@ -799,5 +854,6 @@ def barrido_moma(
         "comunidad": com,
         "referencias": referencias,
         "refs_moma": refs_moma,
-        "pesos": pesos_finales
+        "pesos": pesos_finales,
+        "steadycom_residentes": referencia_residentes
     }

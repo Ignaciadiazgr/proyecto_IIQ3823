@@ -7,6 +7,7 @@ SteadyCom vs Community MOMA.
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from metodo.steadycom_adapted import _steadycom_mu_fijo
 
 
 def _obtener_organismos(resultados):
@@ -185,12 +186,22 @@ def imprimir_resumen(resultados, decimales=6):
     return df
 
 
-def graficar_abundancias(resultados, ax=None):
-    """
-    Grafica las abundancias MOMA y las compara con las
-    abundancias de referencia disponibles.
 
-    Los organismos se detectan automáticamente.
+def graficar_abundancias(resultados, medio=None, ax=None):
+    """
+    Grafica abundancias MOMA y SteadyCom.
+
+    CASO 1: Existen residentes.
+        Calcula SteadyCom exclusivamente para el consorcio
+        residente, fijando cada tasa de crecimiento usada
+        en el barrido de MOMA.
+
+    CASO 2: No existen residentes.
+        Grafica las abundancias de una única referencia
+        SteadyCom de la comunidad completa como líneas
+        horizontales punteadas.
+
+    Las curvas MOMA se mantienen como líneas continuas.
     """
 
     if ax is None:
@@ -198,105 +209,253 @@ def graficar_abundancias(resultados, ax=None):
     else:
         fig = ax.figure
 
+    residentes = list(resultados.get("residentes", []))
+    invasores = list(resultados.get("invasores", []))
+
     organismos = _obtener_organismos(resultados)
 
     if not organismos:
-        raise ValueError(
-            "No hay organismos disponibles para graficar."
-        )
-
-    abund_sc = resultados.get("abundancias_steadycom", {})
-    abund_ref = resultados.get(
-        "abundancias_referencia_residentes", {}
-    )
+        raise ValueError("No hay organismos para graficar.")
 
     colores = {
         org: f"C{i % 10}"
         for i, org in enumerate(organismos)
     }
 
-    handles = []
+    # ========================================================
+    # 1. CURVAS MOMA
+    # ========================================================
 
-    # Curvas MOMA: solamente soluciones factibles
-    filas_factibles = [
+    filas = [
         fila
         for fila in resultados.get("filas", [])
         if fila.get("factible", False)
         and fila.get("abundancias") is not None
     ]
 
-    for organismo in organismos:
+    filas.sort(key=lambda fila: fila["mu"])
+
+    for org in organismos:
 
         datos = [
-            (fila["mu"], fila["abundancias"][organismo])
-            for fila in filas_factibles
-            if organismo in fila["abundancias"]
+            (fila["mu"], fila["abundancias"][org])
+            for fila in filas
+            if org in fila["abundancias"]
         ]
 
-        if datos:
+        if not datos:
+            continue
 
-            datos.sort(key=lambda x: x[0])
+        mus, abundancias = zip(*datos)
 
-            mus = [dato[0] for dato in datos]
-            abundancias = [dato[1] for dato in datos]
+        ax.plot(
+            mus,
+            abundancias,
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            color=colores[org],
+            label=f"{org} - MOMA"
+        )
 
-            ax.plot(
-                mus,
-                abundancias,
-                marker="o",
-                linestyle="-",
-                color=colores[organismo],
-                label=f"{organismo} - MOMA"
+    # ========================================================
+    # 2. REFERENCIAS STEADYCOM
+    # ========================================================
+
+    if residentes:
+
+        # ----------------------------------------------------
+        # CASO 1: STEADYCOM DEL CONSORCIO RESIDENTE
+        # ----------------------------------------------------
+
+        if medio is None:
+            raise ValueError(
+                "Para graficar SteadyCom a crecimiento fijo "
+                "debes proporcionar medio=medio."
             )
 
-            handles.append(
-                Line2D(
-                    [0], [0],
-                    color=colores[organismo],
-                    marker="o",
-                    linestyle="-",
-                    label=f"{organismo} - MOMA"
+        referencia_residentes = resultados.get(
+            "steadycom_residentes"
+        )
+
+        if referencia_residentes is not None:
+
+            comunidad_residente = referencia_residentes[
+                "comunidad"
+            ]
+
+            mu_max_residentes = referencia_residentes[
+                "mu_max"
+            ]
+
+        else:
+
+            # Reconstruir la comunidad residente cuando
+            # el resultado todavía no contiene esa referencia.
+            referencias = resultados["referencias"]
+
+            modelos_originales = referencias.get("modelos")
+
+            if modelos_originales is None:
+                # Compatibilidad con el código previo.
+                modelos_originales = {
+                    org: ref["modelo"]
+                    for org, ref in referencias["pfba"].items()
+                }
+
+            modelos_residentes = {
+                org: modelos_originales[org]
+                for org in residentes
+            }
+
+            referencia_residentes = (
+                calcular_referencia_comunitaria(
+                    modelos_residentes,
+                    medio
                 )
             )
 
-    # Referencias de abundancia
-    referencias = {}
+            comunidad_residente = referencia_residentes[
+                "comunidad"
+            ]
 
-    referencias.update(abund_sc)
-    referencias.update(abund_ref)
+            mu_max_residentes = referencia_residentes[
+                "mu_max"
+            ]
 
-    for organismo, valor in referencias.items():
+        # Valores de crecimiento de las soluciones MOMA.
+        mus = sorted({
+            float(fila["mu"])
+            for fila in resultados.get("filas", [])
+        })
 
-        color = colores.get(organismo)
+        curvas = {
+            org: []
+            for org in residentes
+        }
 
-        if color is None or valor is None:
-            continue
+        # Resolver SteadyCom a crecimiento fijo
+        # para cada tasa del barrido MOMA.
+        for mu in mus:
 
-        ax.axhline(
-            y=valor,
-            color=color,
-            linestyle="--",
-            linewidth=1.8,
-            alpha=0.85
-        )
+            # Crecimiento mayor al máximo residente:
+            # no existe solución de referencia.
+            if mu > mu_max_residentes + 1e-6:
+                abundancias_sc = None
+            else:
+                abundancias_sc = _steadycom_mu_fijo(
+                    comunidad_residente,
+                    medio,
+                    mu
+                )
 
-        handles.append(
-            Line2D(
-                [0], [0],
-                color=color,
+            for org in residentes:
+
+                if abundancias_sc is None:
+                    curvas[org].append(np.nan)
+                else:
+                    curvas[org].append(
+                        abundancias_sc[org]
+                    )
+
+        # Graficar solo los residentes.
+        for org in residentes:
+
+            ax.plot(
+                mus,
+                curvas[org],
                 linestyle="--",
-                label=f"{organismo} - Referencia ({valor:.2f})"
+                marker="s",
+                linewidth=1.8,
+                color=colores[org],
+                alpha=0.85,
+                label=f"{org} - SteadyCom residentes"
             )
+
+        ax.set_title(
+            "Abundancias: MOMA vs SteadyCom residentes"
         )
 
-    ax.set_title("Abundancias: referencias vs Community MOMA")
-    ax.set_xlabel(r"Tasa de crecimiento comunitario ($\mu$)")
+    else:
+
+        # ----------------------------------------------------
+        # CASO 2: SOLO INVASORES
+        # ----------------------------------------------------
+        # Se calcula SteadyCom de la comunidad completa
+        # para cada valor de mu del barrido MOMA.
+        # Esto genera una única referencia comunitaria,
+        # pero con abundancias de B1, B2 y B3 que pueden
+        # variar con mu.
+
+        if medio is None:
+            raise ValueError(
+                "Para graficar SteadyCom completo a crecimiento fijo "
+                "debes proporcionar medio=medio."
+            )
+
+        referencia_completa = resultados["referencias"]["steadycom"]
+        comunidad_completa = referencia_completa["comunidad"]
+        mu_max_completo = referencia_completa["mu_max"]
+
+        mus = sorted({
+            float(fila["mu"])
+            for fila in resultados.get("filas", [])
+            if fila.get("mu") is not None
+        })
+
+        curvas = {
+            org: []
+            for org in invasores
+        }
+
+        for mu in mus:
+
+            if mu > mu_max_completo + 1e-6:
+                abundancias_sc = None
+            else:
+                abundancias_sc = _steadycom_mu_fijo(
+                    comunidad_completa,
+                    medio,
+                    mu
+                )
+
+            for org in invasores:
+                if abundancias_sc is None:
+                    curvas[org].append(np.nan)
+                else:
+                    curvas[org].append(abundancias_sc[org])
+
+        # Graficar la referencia comunitaria completa
+        # como curvas punteadas
+        for org in invasores:
+            ax.plot(
+                mus,
+                curvas[org],
+                linestyle="--",
+                marker="s",
+                linewidth=1.8,
+                color=colores[org],
+                alpha=0.85,
+                label=f"{org} - SteadyCom completo"
+            )
+
+        ax.set_title(
+            "Abundancias: MOMA vs SteadyCom completo"
+        )
+
+    # ========================================================
+    # 3. FORMATO
+    # ========================================================
+
+    ax.set_xlabel(
+        r"Tasa de crecimiento comunitario ($\mu$)"
+    )
+
     ax.set_ylabel("Abundancia relativa")
     ax.set_ylim(-0.02, 1.05)
-    ax.grid(True, alpha=0.3)
 
-    if handles:
-        ax.legend(handles=handles, loc="best", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=9)
 
     fig.tight_layout()
 

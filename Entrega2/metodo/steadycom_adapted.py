@@ -19,6 +19,8 @@ from reframed.solvers.solution import Status
 from reframed.core.model import ReactionType
 from reframed.solvers import solver_instance
 from warnings import warn
+from gurobipy import GRB
+import gurobipy as gp
 from math import inf, isinf
 
 def es_intercambio(rid, reaction):
@@ -191,3 +193,166 @@ def binary_search(solver, objective, obj_frac=1, minimize=False, max_iters=100, 
         warn("Max iterations exceeded.")
 
     return sol
+
+
+def _steadycom_mu_fijo(
+    comunidad,
+    medio,
+    mu,
+    tolerancia_pfba=1e-7
+):
+    """
+    SteadyCom con crecimiento fijo y pFBA comunitario.
+
+    Etapa 1:
+        Minimizar la suma de flujos absolutos a mu fijo.
+
+    Etapa 2:
+        Mantener el costo pFBA mínimo y seleccionar una
+        composición única minimizando sum(X_i**2).
+
+    Devuelve:
+        dict {organismo: abundancia}
+        None si el problema es infactible.
+    """
+
+    # --------------------------------------------------------
+    # 1. Construir SteadyCom con crecimiento fijo
+    # --------------------------------------------------------
+
+    solver = build_problem(
+        comunidad,
+        growth=float(mu)
+    )
+
+    gm = solver.problem
+    gm.Params.OutputFlag = 0
+
+    # --------------------------------------------------------
+    # 2. Aplicar restricciones del medio
+    # --------------------------------------------------------
+
+    usados = set()
+
+    for rxn_id in comunidad.merged_model.get_exchange_reactions():
+
+        rxn = comunidad.merged_model.reactions[rxn_id]
+        met_id = next(iter(rxn.stoichiometry))
+
+        base = met_id[2:] if met_id.startswith("M_") else met_id
+
+        lb, ub = medio.get(base, (0.0, 100.0))
+
+        variable = gm.getVarByName(rxn_id)
+
+        if variable is None:
+            raise ValueError(
+                f"No existe la variable de intercambio {rxn_id}"
+            )
+
+        variable.LB = max(float(lb), -100.0)
+        variable.UB = min(float(ub), 100.0)
+
+        usados.add(base)
+
+    faltantes = set(medio) - usados
+
+    if faltantes:
+        raise ValueError(
+            f"Metabolitos no encontrados: {sorted(faltantes)}"
+        )
+
+    gm.update()
+
+    # --------------------------------------------------------
+    # 3. pFBA: minimizar suma de flujos absolutos
+    # --------------------------------------------------------
+
+    flujos = {
+        rxn_id: gm.getVarByName(rxn_id)
+        for rxn_id in comunidad.merged_model.reactions
+    }
+
+    absolutos = {}
+
+    for rxn_id, variable in flujos.items():
+
+        a = gm.addVar(
+            lb=0,
+            name=f"abs_{rxn_id}"
+        )
+
+        gm.addConstr(a >= variable)
+        gm.addConstr(a >= -variable)
+
+        absolutos[rxn_id] = a
+
+    costo_pfba = gp.quicksum(absolutos.values())
+
+    gm.setObjective(
+        costo_pfba,
+        GRB.MINIMIZE
+    )
+
+    gm.optimize()
+
+    if gm.Status == GRB.INFEASIBLE:
+        gm.dispose()
+        return None
+
+    if gm.Status != GRB.OPTIMAL:
+        estado = gm.Status
+        gm.dispose()
+        raise RuntimeError(
+            f"pFBA no alcanzó optimalidad para mu={mu}: "
+            f"status={estado}"
+        )
+
+    costo_minimo = gm.ObjVal
+
+    # --------------------------------------------------------
+    # 4. Mantener la solución parsimoniosa
+    # --------------------------------------------------------
+
+    gm.addConstr(
+        costo_pfba <= costo_minimo + tolerancia_pfba,
+        name="preservar_pfba"
+    )
+
+    # --------------------------------------------------------
+    # 5. Desempate: composición única
+    # --------------------------------------------------------
+
+    X = {
+        org: gm.getVarByName(f"x_{org}")
+        for org in comunidad.organisms
+    }
+
+    objetivo_secundario = gp.quicksum(
+        X[org] * X[org]
+        for org in comunidad.organisms
+    )
+
+    gm.setObjective(
+        objetivo_secundario,
+        GRB.MINIMIZE
+    )
+
+    gm.optimize()
+
+    if gm.Status != GRB.OPTIMAL:
+        estado = gm.Status
+        gm.dispose()
+        raise RuntimeError(
+            f"Desempate de abundancias no óptimo "
+            f"para mu={mu}: status={estado}"
+        )
+
+    abundancias = {
+        org: X[org].X
+        for org in comunidad.organisms
+    }
+
+    gm.dispose()
+
+    return abundancias
