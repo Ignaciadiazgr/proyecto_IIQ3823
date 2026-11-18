@@ -221,6 +221,125 @@ def _fijar_crecimiento(gm, V, X, com, mu):
         )
 
 
+def pfba_comunidad_residente(
+    referencia_residentes,
+    medio,
+    holgura=1e-6
+):
+    """
+    Calcula flujos de referencia metabólicamente consistentes
+    con la comunidad residente.
+
+    1. Utiliza X_ref obtenido mediante SteadyCom residente.
+    2. Fija las abundancias residentes.
+    3. Fija el crecimiento comunitario cercano al óptimo.
+    4. Minimiza la suma de flujos absolutos (pFBA).
+
+    Devuelve flujos absolutos y específicos de referencia.
+    """
+
+    com = referencia_residentes["comunidad"]
+    X_ref = referencia_residentes["abundancias"]
+    mu_sc = float(referencia_residentes["mu_max"])
+
+    # El crecimiento se reduce ligeramente para evitar
+    # problemas numéricos en el máximo de SteadyCom.
+    mu_ref = mu_sc * (1.0 - holgura)
+
+    if not 0 <= holgura < 1:
+        raise ValueError("holgura debe estar entre 0 y 1.")
+
+    if any(x <= 1e-9 for x in X_ref.values()):
+        raise ValueError(
+            "SteadyCom asignó abundancia nula a un residente. "
+            "No se pueden definir sus flujos específicos."
+        )
+
+    # Construir modelo comunitario con las mismas
+    # restricciones que utiliza MOMA.
+    gm, X, V = _modelo_base(com, medio)
+
+    try:
+        gm.Params.OutputFlag = 0
+
+        # Fijar las abundancias residentes.
+        for org, x_ref in X_ref.items():
+            X[org].LB = float(x_ref)
+            X[org].UB = float(x_ref)
+
+        # Fijar crecimiento balanceado.
+        _fijar_crecimiento(
+            gm, V, X, com, mu_ref
+        )
+
+        # Variables auxiliares para valores absolutos.
+        absolutos = {}
+
+        for rid, flujo in V.items():
+
+            a = gm.addVar(
+                lb=0,
+                name=f"abs_{rid}"
+            )
+
+            gm.addConstr(a >= flujo)
+            gm.addConstr(a >= -flujo)
+
+            absolutos[rid] = a
+
+        # pFBA comunitario.
+        gm.setObjective(
+            gp.quicksum(absolutos.values()),
+            GRB.MINIMIZE
+        )
+
+        gm.optimize()
+
+        if gm.Status != GRB.OPTIMAL:
+            raise RuntimeError(
+                "No se obtuvo pFBA comunitario óptimo "
+                f"para los residentes. Estado: {gm.Status}. "
+                "Revisar factibilidad de X_ref y mu_ref."
+            )
+
+        flujos_absolutos = {}
+        flujos_especificos = {}
+
+        for org, modelo in com.organisms.items():
+
+            flujos_absolutos[org] = {}
+            flujos_especificos[org] = {}
+
+            for rid in modelo.reactions:
+
+                clave = (org, rid)
+
+                if clave not in com.reaction_map:
+                    continue
+
+                rid_com = com.reaction_map[clave]
+
+                valor = float(V[rid_com].X)
+
+                # Guardamos las referencias con los
+                # identificadores originales de reacción.
+                flujos_absolutos[org][rid] = valor
+
+                flujos_especificos[org][rid] = (
+                    valor / X_ref[org]
+                )
+
+        return {
+            "mu_ref": mu_ref,
+            "abundancias": X_ref.copy(),
+            "flujos_absolutos": flujos_absolutos,
+            "flujos_especificos": flujos_especificos
+        }
+
+    finally:
+        gm.dispose()
+
+
 # ============================================================
 # OPTIMIZACIÓN
 # ============================================================
@@ -417,12 +536,28 @@ class ProblemaInercia:
                 "de referencia de los residentes."
             )
 
-        suma_ref = sum(X_ref[org] for org in self.residentes)
+        
+        if self.residentes:
 
-        self.X_ref = {
-            org: X_ref[org] / suma_ref
-            for org in self.residentes
-        }
+            suma_ref = sum(
+                X_ref[org]
+                for org in self.residentes
+            )
+
+            if suma_ref <= 0:
+                raise ValueError(
+                    "La suma de abundancias residentes "
+                    "debe ser positiva."
+                )
+
+            self.X_ref = {
+                org: X_ref[org] / suma_ref
+                for org in self.residentes
+            }
+
+        else:
+            self.X_ref = {}
+
 
         # Organismos que deben permanecer presentes
         self.presentes = (
@@ -693,34 +828,33 @@ def barrido_moma(
             "exactamente todos los organismos de la comunidad."
         )
 
+    
     # --------------------------------------------------------
-    # Preparar referencias pFBA
+    # 1. Referencias metabólicas individuales
     # --------------------------------------------------------
 
+    # Inicialmente se obtienen referencias pFBA
+    # individuales para todos los organismos.
     refs_moma = preparar_referencias_moma(
         referencias,
         com
     )
 
-    
-    # --------------------------------------------------------
-    # Referencia de abundancias previa a la invasión
-    # --------------------------------------------------------
-
     referencia_residentes = None
+    pfba_residentes = None
 
-    if not residentes:
-        X_ref = {}
+    # --------------------------------------------------------
+    # 2. Referencia del consorcio residente
+    # --------------------------------------------------------
 
-    elif X_ref is None:
+    if residentes:
 
-        # Seleccionar exclusivamente los modelos residentes.
         modelos_residentes = {
             org: referencias["modelos"][org]
             for org in residentes
         }
 
-        # Ejecutar SteadyCom sin incluir a los invasores.
+        # SteadyCom sin invasores.
         referencia_residentes = calcular_referencia_comunitaria(
             modelos=modelos_residentes,
             medio=medio,
@@ -728,50 +862,73 @@ def barrido_moma(
             max_iters=max_iters
         )
 
-        # Estas son las abundancias previas a la invasión.
-        X_ref = referencia_residentes["abundancias"].copy()
-
-    else:
-        # Permitir referencias manuales.
-        if set(X_ref) != set(residentes):
-            raise ValueError(
-                "X_ref debe contener exactamente los residentes."
-            )
-
-        X_ref = {
-            org: float(X_ref[org])
-            for org in residentes
-        }
-
-    # Verificación y normalización por posibles errores numéricos.
-    if residentes:
-        suma = sum(X_ref.values())
-
-        if suma <= 0:
-            raise ValueError(
-                "La suma de abundancias residentes debe ser positiva."
-            )
-
-        X_ref = {
-            org: valor / suma
-            for org, valor in X_ref.items()
-        }
-
-    # --------------------------------------------------------
-    # Preparar abundancias de referencia
-    # --------------------------------------------------------
-
-    if X_ref is None:
-
-        X_ref = referencia_abundancias_residentes(
-            abundancias_steadycom,
-            residentes
+        X_steadycom = (
+            referencia_residentes["abundancias"].copy()
         )
 
-    elif not residentes:
+        # Utilizar la composición de SteadyCom como
+        # estado previo a la invasión.
+        if X_ref is not None:
 
+            if set(X_ref) != set(residentes):
+                raise ValueError(
+                    "X_ref debe contener exactamente "
+                    "los organismos residentes."
+                )
+
+            # Una composición manual distinta requiere
+            # recalcular conjuntamente las referencias.
+            if any(
+                abs(X_ref[org] - X_steadycom[org]) > 1e-6
+                for org in residentes
+            ):
+                raise ValueError(
+                    "X_ref manual difiere de SteadyCom "
+                    "residente. No es consistente con "
+                    "las referencias comunitarias."
+                )
+
+        X_ref = X_steadycom
+
+        # ----------------------------------------------------
+        # 3. pFBA del consorcio residente
+        # ----------------------------------------------------
+
+        pfba_residentes = pfba_comunidad_residente(
+            referencia_residentes,
+            medio
+        )
+
+        # ----------------------------------------------------
+        # 4. Sustituir referencias de residentes
+        # ----------------------------------------------------
+
+        for org in residentes:
+
+            refs_moma[org] = {}
+
+            for rid, flujo in (
+                pfba_residentes["flujos_especificos"][org].items()
+            ):
+
+                clave = (org, rid)
+
+                if clave not in com.reaction_map:
+                    continue
+
+                rid_com = com.reaction_map[clave]
+
+                refs_moma[org][rid_com] = float(flujo)
+
+    else:
+
+        # Sin residentes, todas las referencias de MOMA
+        # siguen siendo los pFBA individuales.
         X_ref = {}
 
+    # --------------------------------------------------------
+    # 5. Crecimiento máximo de la comunidad completa
+    # --------------------------------------------------------
 
     mu_techo = referencias["steadycom"]["mu_max"]
 
@@ -842,5 +999,7 @@ def barrido_moma(
         "referencias": referencias,
         "refs_moma": refs_moma,
         "pesos": pesos_finales,
-        "steadycom_residentes": referencia_residentes
+        "steadycom_residentes": referencia_residentes,
+        "pfba_residentes": pfba_residentes,
+        "steadycom_residentes": referencia_residentes,
     }
